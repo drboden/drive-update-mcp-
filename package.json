@@ -1,0 +1,19 @@
+{
+  "name": "drive-update-mcp",
+  "version": "1.0.0",
+  "description": "Remote MCP server exposing an in-place Google Drive file update tool for Claude.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "express": "^5.2.1",
+    "googleapis": "^173.0.0",
+    "zod": "^3.23.8"
+  }
+}

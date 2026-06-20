@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: drive-update-mcp
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: GOOGLE_SERVICE_ACCOUNT_JSON
+        sync: false
+      - key: MCP_AUTH_TOKEN
+        sync: false
