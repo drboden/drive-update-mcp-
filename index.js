@@ -16,11 +16,13 @@ function makeAuth() {
     scopes: [
       "https://www.googleapis.com/auth/drive",
       "https://www.googleapis.com/auth/documents",
+      "https://www.googleapis.com/auth/presentations",
     ],
   });
 }
 const getDrive = () => google.drive({ version: "v3", auth: makeAuth() });
 const getDocs = () => google.docs({ version: "v1", auth: makeAuth() });
+const getSlides = () => google.slides({ version: "v1", auth: makeAuth() });
 
 const bufFromB64 = (b64) => Buffer.from(b64, "base64");
 const streamFromBuf = (buf) => Readable.from(buf);
@@ -47,7 +49,7 @@ function docToText(content = []) {
 }
 
 function buildServer() {
-  const server = new McpServer({ name: "drive-update-mcp", version: "1.1.0" });
+  const server = new McpServer({ name: "drive-update-mcp", version: "1.2.0" });
 
   server.registerTool("find_files", {
     title: "Find Drive files by name",
@@ -100,6 +102,72 @@ function buildServer() {
         occurrencesChanged: (rep.replaceAllText && rep.replaceAllText.occurrencesChanged) || 0,
       }));
       return ok({ documentId, changed });
+    } catch (e) { return fail((e && e.message) || String(e)); }
+  });
+
+  server.registerTool("get_slides_text", {
+    title: "Read a Google Slides deck's text",
+    description: "Return the text of a Google Slides presentation (by its fileId / presentationId), grouped by slide, with each slide's objectId and each text shape's objectId — so you can see exact wording and target edits before changing anything.",
+    inputSchema: { presentationId: z.string() },
+  }, async ({ presentationId }) => {
+    try {
+      const slides = getSlides();
+      const res = await slides.presentations.get({ presentationId });
+      const readShapeText = (shape) => {
+        if (!shape || !shape.text) return "";
+        return (shape.text.textElements || [])
+          .map((t) => (t.textRun && t.textRun.content) || "")
+          .join("");
+      };
+      const out = (res.data.slides || []).map((slide, i) => {
+        const lines = [`--- Slide ${i + 1} (id: ${slide.objectId}) ---`];
+        for (const el of slide.pageElements || []) {
+          const direct = readShapeText(el.shape).trim();
+          if (direct) lines.push(`[${el.objectId}] ${direct}`);
+          if (el.table) {
+            for (const row of el.table.tableRows || []) {
+              for (const cell of row.tableCells || []) {
+                const cellText = readShapeText({ text: cell.text }).trim();
+                if (cellText) lines.push(`[${el.objectId} table] ${cellText}`);
+              }
+            }
+          }
+        }
+        return lines.join("\n");
+      });
+      return ok({ presentationId, title: res.data.title, text: out.join("\n\n") });
+    } catch (e) { return fail((e && e.message) || String(e)); }
+  });
+
+  server.registerTool("replace_text_in_slides", {
+    title: "Edit a Google Slides deck in place (find & replace)",
+    description: "Make targeted text edits to an EXISTING Google Slides presentation in place, WITHOUT re-uploading. Each replacement swaps every occurrence of find with replace, keeping the deck's ID, link, formatting and layout. Optionally limit the replace to specific slides by passing their objectIds in pageObjectIds. Call get_slides_text first to copy exact wording and IDs.",
+    inputSchema: {
+      presentationId: z.string(),
+      replacements: z.array(z.object({
+        find: z.string(), replace: z.string(), matchCase: z.boolean().optional(),
+      })).min(1),
+      pageObjectIds: z.array(z.string()).optional(),
+    },
+  }, async ({ presentationId, replacements, pageObjectIds }) => {
+    try {
+      const slides = getSlides();
+      const requests = replacements.map((r) => {
+        const req = {
+          replaceAllText: {
+            containsText: { text: r.find, matchCase: r.matchCase !== false },
+            replaceText: r.replace,
+          },
+        };
+        if (pageObjectIds && pageObjectIds.length) req.replaceAllText.pageObjectIds = pageObjectIds;
+        return req;
+      });
+      const res = await slides.presentations.batchUpdate({ presentationId, requestBody: { requests } });
+      const changed = (res.data.replies || []).map((rep, i) => ({
+        find: replacements[i].find,
+        occurrencesChanged: (rep.replaceAllText && rep.replaceAllText.occurrencesChanged) || 0,
+      }));
+      return ok({ presentationId, changed });
     } catch (e) { return fail((e && e.message) || String(e)); }
   });
 
